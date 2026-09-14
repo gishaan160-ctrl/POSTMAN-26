@@ -1,0 +1,65 @@
+A small feedforward neural network with a FULLY MANUAL forward pass and backward pass 
+(backpropagation), implemented with NumPy only.
+
+Architecture (multiclass classification head, used for the digits task):
+
+    X (N,64) --Linear W1,b1--> Z1 (N,H) --ReLU--> A1 (N,H)
+              --Linear W2,b2--> Z2 (N,10) --Softmax--> A2 (N,10) --CrossEntropy--> 
+
+===========================================================================
+MATH DERIVATION #1: Softmax + Cross-Entropy (the "main" combo)
+===========================================================================
+Per-sample softmax output:      a_k = exp(z_k) / sum_j exp(z_j)
+Per-sample cross-entropy loss:  l   = - sum_k y_k * log(a_k)        (y one-hot)
+
+Step 1 - Jacobian of softmax:
+    da_k/dz_j = a_k * (delta_kj - a_j)          (standard softmax Jacobian)
+
+Step 2 - dl/da_k:
+    dl/da_k = -y_k / a_k
+
+Step 3 - chain rule, sum over k (every output a_k depends on every z_j):
+    dl/dz_j = sum_k (dl/da_k) * (da_k/dz_j)
+            = sum_k (-y_k / a_k) * a_k * (delta_kj - a_j)
+            = sum_k -y_k * (delta_kj - a_j)
+            = -y_j + a_j * sum_k y_k
+            = a_j - y_j                          (since sum_k y_k = 1, one-hot)
+
+So the combined gradient of softmax+CE w.r.t. the PRE-activation z is simply:
+
+    dL/dZ2 = (A2 - Y) / N                        <-- averaged over the batch
+
+This is why we never explicitly build the softmax Jacobian in code: the two
+non-linear/loss stages telescope into one clean expression.
+
+Step 4 - gradients of the second linear layer  Z2 = A1 @ W2 + b2:
+    dL/dW2 = A1^T @ dL/dZ2                      (standard linear-layer rule)
+    dL/db2 = sum over batch of dL/dZ2
+    dL/dA1 = dL/dZ2 @ W2^T
+
+Step 5 - backprop through ReLU  A1 = relu(Z1):
+    relu'(z) = 1 if z > 0 else 0
+    dL/dZ1 = dL/dA1 * relu'(Z1)                 (elementwise)
+
+Step 6 - gradients of the first linear layer  Z1 = X @ W1 + b1:
+    dL/dW1 = X^T @ dL/dZ1
+    dL/db1 = sum over batch of dL/dZ1
+    (dL/dX is not needed here since X is data, not a parameter)
+
+===========================================================================
+MATH DERIVATION #2: Tanh + Sigmoid + Binary Cross-Entropy (stretch combo)
+===========================================================================
+    a2 = sigmoid(z2) = 1 / (1 + exp(-z2))
+    l  = -[y*log(a2) + (1-y)*log(1-a2)]
+
+By an entirely analogous computation to derivation #1 (chain rule through
+sigmoid'(z) = a2*(1-a2)):
+    dl/da2 = -y/a2 + (1-y)/(1-a2)
+    dl/dz2 = dl/da2 * a2*(1-a2) = a2 - y
+
+So again the "logit" gradient collapses to (prediction - target):
+    dL/dZ2 = (A2 - Y) / N
+
+Backprop through tanh  A1 = tanh(Z1):
+    tanh'(z) = 1 - tanh(z)^2
+    dL/dZ1 = dL/dA1 * (1 - A1^2)
